@@ -1,0 +1,1188 @@
+---
+title: "Fan Discussions and Interactions During the 2026 FIFA World Cup"
+subtitle: "A Social Web Analytics Investigation Using Bluesky Data"
+author: "Zakaria, Anas, Dinesh"
+date: "9 October 2026"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+fontsize: 11pt
+geometry: margin=1in
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  results = "hide",
+  fig.width = 7,
+  fig.height = 4,
+  out.width = "85%"
+)
+```
+
+## Group Information
+
+**Unit:** COMP3020 — Social Web Analytics
+
+**Project:** 2026 FIFA World Cup Discussions on Bluesky
+
+**Group Number:** [Enter group number]
+
+| Group Member | Student ID | Contribution |
+|---|---|---|
+| Zakaria Affey | 22132408 | 34% |
+| Anas Anas | 22223965 | 33% |
+| Dinesh B K | 22223585 | 33% |
+
+**Total contribution:** 100%
+
+**GitHub Repository:** https://github.com/affeyzak-blip/COMP3020-WorldCup2026-Analysis
+
+
+# COMP 3020 - FIFA WORLD CUP 2026
+
+## Introduction
+
+This project uses data collected from Bluesky, a social networking platform where users share posts and interact with other accounts. We used the atrrr package in R to retrieve posts discussing the 2026 FIFA World Cup.
+
+Our initial search used the keyword "World Cup" and focused on posts published between 11 June and 19 July 2026, covering the tournament period.
+
+We first examined the dataset's size, available variables, data types and missing values to determine whether the collected information was suitable for further analysis.
+
+## Research Questions
+
+1.  What were the main topics discussed by Bluesky users during the 2026 FIFA World Cup?
+2.  Did posts mentioning Spain receive different levels of engagement compared with posts mentioning Argentina?
+3.  Can World Cup discussions on Bluesky be grouped into distinct themes?
+4.  Which Bluesky accounts were most central to interactions about the 2026 FIFA World Cup?
+
+```{r}
+library(atrrr)
+library("tm")
+library("SnowballC")
+```
+
+```{r}
+# chunk added after completion of the analysis for future use without the need for authentication 
+worldcup_posts <- readRDS("worldcup_posts.rds")
+
+dim(worldcup_posts)
+```
+
+```{r}
+# Authenticating bluesky
+bsky_app_pw <- "y6vd-2lum-v6tt-rnwi" 
+auth(user = "22132408.bsky.social", password = bsky_app_pw)
+
+# Searching for 2026 FIFA World Cup posts
+worldcup_posts = search_skeet("World Cup",
+                                    sort = "latest",
+                                    since = "2026-06-11",
+                                    until = "2026-07-20",
+                                    limit = 100)
+
+# Checking the dataset
+names(worldcup_posts)
+nrow(worldcup_posts)
+head(worldcup_posts)
+```
+
+## 1. What were the main topics discussed by Bluesky users during the 2026 FIFA World Cup?
+
+## Data Collection
+
+After collecting the posts, we examine the dataset to understand its structure and available information. We check the number of observations and variables, inspected the first few records, and identified any missing values. This helped us determine which variables could be used for the statistical, text and network analyses.
+
+```{r}
+dim(worldcup_posts)
+names(worldcup_posts)
+head(worldcup_posts)
+str(worldcup_posts)
+colSums(is.na(worldcup_posts))
+```
+
+### Expanding the Dataset
+
+The initial search returned 194 posts containing the term "World Cup". To obtain a bigger sample of discussions surrounding the 2026 FIFA World Cup, we expand the collection using additional relevant search terms. This helps capture conversations that may use different keywords or hashtags when referring to the tournament. Duplicate posts will be removed to avoid counting the same content multiple times.
+
+```{r}
+# Search for additional World Cup discussions
+fifa_posts <- search_skeet(
+  "FIFA World Cup",
+  sort = "latest",
+  since = "2026-06-11",
+  until = "2026-07-20",
+  limit = 500
+)
+
+worldcup2026_posts <- search_skeet(
+  "WorldCup2026",
+  sort = "latest",
+  since = "2026-06-11",
+  until = "2026-07-20",
+  limit = 500
+)
+
+fifa2026_posts <- search_skeet(
+  "FIFA2026",
+  sort = "latest",
+  since = "2026-06-11",
+  until = "2026-07-20",
+  limit = 500
+)
+
+# Combining all search results
+all_posts <- rbind(
+  worldcup_posts,
+  fifa_posts,
+  worldcup2026_posts,
+  fifa2026_posts
+)
+
+# Removing duplicate posts using their unique URI
+all_posts <- all_posts[!duplicated(all_posts$uri), ]
+
+# Checking the expanded dataset
+dim(all_posts)
+```
+
+### Saving the collected data
+
+After combining the search results and removing duplicate posts, the dataset contained 1,871 unique posts and 23 variables. We saved the collected data before performing further cleaning so that the original information could be preserved and used to reproduce the analysis.
+
+```{r}
+# Saving the complete dataset
+saveRDS(all_posts, "worldcup2026_raw.rds")
+
+# Saving the main variables as a CSV file
+worldcup_data <- all_posts[, c(
+  "uri",
+  "author_handle",
+  "author_name",
+  "text",
+  "created_at",
+  "like_count",
+  "repost_count",
+  "reply_count",
+  "quote_count",
+  "in_reply_to"
+)]
+
+write.csv(
+  worldcup_data,
+  "worldcup2026_posts.csv",
+  row.names = FALSE
+)
+
+# Confirm the saved dataset
+dim(worldcup_data)
+head(worldcup_data)
+```
+
+## Data Cleaning and Preparation
+
+### Removing missing and duplicate posts
+
+Before conducting the analysis, we checked the dataset for missing text and duplicate posts. Posts without meaningful text were excluded because they would not contribute to our text analysis. We also checked for duplicate post identifiers to ensure that each post was represented only once in the dataset.
+
+```{r}
+# Creating a copy of the collected dataset
+clean_posts <- worldcup_data
+
+# Checking the number of posts before cleaning
+nrow(clean_posts)
+
+# Removing posts with missing or empty text
+clean_posts <- clean_posts[
+  !is.na(clean_posts$text) &
+  trimws(clean_posts$text) != "",
+]
+
+# Removing duplicate posts
+clean_posts <- clean_posts[
+  !duplicated(clean_posts$uri),
+]
+
+# Checking the number of posts after cleaning
+nrow(clean_posts)
+
+# Checking remaining missing text
+sum(is.na(clean_posts$text))
+```
+
+### Checking Dates and World Cup Relevance
+
+After removing incomplete and duplicate records, we checked the publication dates of the remaining posts to ensure they were collected from the 2026 FIFA World Cup period. We also examined the text of a sample of posts to assess whether the search results were relevant to the tournament. We did this because keyword searches can sometimes retrieve unrelated content.
+
+```{r}
+# Check the earliest and latest post dates
+range(clean_posts$created_at, na.rm = TRUE)
+
+# Check how many posts fall within the tournament period
+sum(
+  as.Date(clean_posts$created_at) >= as.Date("2026-06-11") &
+  as.Date(clean_posts$created_at) <= as.Date("2026-07-19"),
+  na.rm = TRUE
+)
+
+# Display a sample of post text
+set.seed(123)
+sample(clean_posts$text, 10)
+```
+
+### Filtering Posts by Tournament Dates
+
+Some posts were collected putside the date period we chose. To keep the analysis consistent, we filtered the dataset to include only posts published between 11 June and 19 July 2026. This ensures that our findings focus on discussions during the World Cup rather than reactions published after the competition.
+
+```{r}
+# Number of posts before date filtering
+nrow(clean_posts)
+
+# Keep posts published during the World Cup
+clean_posts <- clean_posts[
+  !is.na(clean_posts$created_at) &
+  as.Date(clean_posts$created_at) >= as.Date("2026-06-11") &
+  as.Date(clean_posts$created_at) <= as.Date("2026-07-19"),
+]
+
+# Number of posts after filtering
+nrow(clean_posts)
+
+# Confirm the date range
+range(clean_posts$created_at)
+```
+
+### Checking the relevance of the collected posts
+
+Although we collected the data using World Cup related search terms, some posts may refer to other competitions or historical events, such as previuos World Cups. So we examined for potentially unrelated posts before filtering further.This helps improve the relevance of the dataset while avoiding the unnecessary removal of actual World Cup conversations.
+
+```{r}
+# Identify posts mentioning potentially unrelated topics
+unrelated <- grepl(
+  "Club World Cup|World Cup 2030|World Cup 2022|World Cup 1930",
+  clean_posts$text,
+  ignore.case = TRUE
+)
+
+# Count potentially unrelated posts
+sum(unrelated)
+
+# Inspect a sample of these posts
+head(clean_posts$text[unrelated], 10)
+```
+
+### Filtering Irrelevant Posts
+
+A sample of the collected posts showed that some discussions compared the 2026 FIFA World Cup with previous tournaments, while others focused on unrelated competitions. We therefore applied a conservative filtering rule to remove posts referring to other tournaments without explicitly mentioning the 2026 World Cup. This approach helps preserve relevant comparisons while reducing unrelated content.
+
+```{r}
+# Identify references to other tournaments
+other_tournaments <- grepl(
+  "Club World Cup|World Cup 2030|World Cup 2022|World Cup 1930",
+  clean_posts$text,
+  ignore.case = TRUE
+)
+
+# Identify explicit references to the 2026 tournament
+mentions_2026 <- grepl(
+  "2026|FIFA2026|WorldCup2026",
+  clean_posts$text,
+  ignore.case = TRUE
+)
+
+# Flag potentially irrelevant posts
+remove_posts <- other_tournaments & !mentions_2026
+
+# Check how many posts match the rule
+sum(remove_posts)
+
+# Remove flagged posts
+clean_posts <- clean_posts[!remove_posts, ]
+
+# Check remaining dataset size
+nrow(clean_posts)
+```
+
+### Preparing Texts for Analysis
+
+To prepare the Bluesky posts for text analysis, we used the tm and SnowballC packages in R. The text was converted to lowercase, and URLs, punctuation, numbers and common English stop words were removed. We also applied stemming to reduce related words to their common root forms. This helps reduce unnecessary variation in the text and make it easier to identify discussion themes.
+
+```{r}
+# Create a text corpus
+worldcup_corpus <- VCorpus(
+  VectorSource(clean_posts$text)
+)
+
+# Convert text to lowercase
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  content_transformer(tolower)
+)
+
+# Remove URLs
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  content_transformer(function(x) {
+    gsub("https?://[^[:space:]]+", "", x)
+  })
+)
+
+# Remove punctuation and numbers
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  removePunctuation
+)
+
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  removeNumbers
+)
+
+# Remove common English stop words
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  removeWords,
+  stopwords("english")
+)
+
+# Remove extra spaces
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  stripWhitespace
+)
+
+# Apply stemming
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  stemDocument
+)
+
+# Display the first five processed posts
+inspect(worldcup_corpus[1:5])
+```
+
+## Exploratory Data Analysis and Visualisation
+
+### Examining the processed text
+
+After pre processing the posts, we examined a sample of the cleaned text to check whether unnecessary characters and common words had been removed.Just to confirm that the text was suitable for identifying frequently discussed topics and preparing the document-term matrix used later.
+
+```{r}
+# Extract the processed text from the corpus
+processed_text <- sapply(
+  worldcup_corpus,
+  as.character
+)
+
+# Display the first five processed posts
+head(processed_text, 5)
+
+# Check the number of processed documents
+length(processed_text)
+```
+
+### Creating the Document-Term Matrix
+
+In order to analyse the words used in World Cup discussions, we created a Document-Term Matrix using the tm package. Each row represents a Bluesky post, while each column represents a word appearing in the collected text. We also improved the pre processing to remove website addresses before removing punctuation, preventing URLs from being treated as meaningful words.
+
+```{r}
+# Rebuild corpus from original post text
+worldcup_corpus <- VCorpus(
+  VectorSource(clean_posts$text)
+)
+
+# Remove URLs and website addresses
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  content_transformer(function(x) {
+    gsub(
+      "(https?://|www\\.)[^[:space:]]+",
+      " ",
+      x
+    )
+  })
+)
+
+# Convert to lowercase
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  content_transformer(tolower)
+)
+
+# Remove punctuation, numbers and stop words
+worldcup_corpus <- tm_map(worldcup_corpus, removePunctuation)
+worldcup_corpus <- tm_map(worldcup_corpus, removeNumbers)
+worldcup_corpus <- tm_map(
+  worldcup_corpus,
+  removeWords,
+  stopwords("english")
+)
+
+# Remove extra spaces and apply stemming
+worldcup_corpus <- tm_map(worldcup_corpus, stripWhitespace)
+worldcup_corpus <- tm_map(worldcup_corpus, stemDocument)
+
+# Create the Document-Term Matrix
+worldcup_dtm <- DocumentTermMatrix(worldcup_corpus)
+
+# Check its dimensions
+dim(worldcup_dtm)
+```
+
+### Identifying most frequent Words
+
+After creating the Document-Term Matrix, we calculated how frequently each word appeared across the collected Bluesky posts. And then identified the 20 most common terms to examine the main subjects discussed by football fans during the final stages of the 2026 FIFA World Cup. This gives an overview before getiing into more anlysis.
+
+```{r}
+# Calculate the frequency of each word
+word_freq <- colSums(as.matrix(worldcup_dtm))
+
+# Sort words from most frequent to least frequent
+word_freq <- sort(word_freq, decreasing = TRUE)
+
+# Display the 20 most frequent words
+head(word_freq, 20)
+```
+
+The most frequent terms were "fifa" (1,082), "worldcup" (753), "world" (717) and "cup" (660), which was expected because these terms were used to collect the data. Spain (539) and Argentina (310) were also frequently mentioned, which is understandable since they were the two teams in the final. For analysis purposes, it suggests that discussions involving these teams were prominent in the collected sample. 'Trump' also appeared 219 times, indicating that political discussions may have surrounded this World Cup.
+
+### Visualising the Most frequent words
+
+We created a bar chart showing the 15 most frequently occurring meaningful terms in the collected posts. Generic search terms like "fifa", "worldcup", "world" and "cup" were excluded because they appeared frequently as a result of our data collection method. The chart helps identify which teams, events and other topics attracted attention during the final stages of the tournament.
+
+```{r}
+# Remove generic World Cup search terms
+exclude_words <- c(
+  "fifa", "worldcup", "world", "cup",
+  "fifaworldcup", "fifa2026", "worldcup2026"
+)
+
+filtered_freq <- word_freq[
+  !names(word_freq) %in% exclude_words
+]
+
+# Select the 15 most frequent remaining words
+top_words <- head(filtered_freq, 15)
+
+# Create the bar chart
+barplot(
+  rev(top_words),
+  horiz = TRUE,
+  las = 1,
+  col = "steelblue",
+  main = "Most Discussed Terms During the 2026 World Cup",
+  xlab = "Word Frequency",
+  cex.names = 0.8,
+  mar = c(5, 8, 4, 2)
+)
+```
+
+The bar chart makes it easier to compare the main topics discussed during the World Cup. Team-related terms stand out more than general football words, showing that fans were particularly focused on specific teams and their performances. After removing the generic search terms, 'Spain' appears most, making sense as they were the winners. The chart also shows how discussions were concentrated around the final stages of the tournament rather than general football topics. Overall, the visualisation helps us understand which subjects received the most attention in our collected posts.
+
+### Analysing Engagement levels
+
+We looked into the total number of likes, reposts and replies received by the collected posts to understand how users interacted with World Cup content on Bluesky. Comparing these engagement measures allows us to identify which types of interactions were most common in our dataset.
+
+```{r}
+# Calculate total engagement by type
+engagement <- c(
+  Likes = sum(clean_posts$like_count, na.rm = TRUE),
+  Reposts = sum(clean_posts$repost_count, na.rm = TRUE),
+  Replies = sum(clean_posts$reply_count, na.rm = TRUE)
+)
+
+# Display the totals
+engagement
+
+# Create a bar chart
+barplot(
+  engagement,
+  col = c("steelblue", "orange", "seagreen"),
+  main = "Engagement with 2026 World Cup Posts",
+  ylab = "Total Interactions",
+  ylim = c(0, max(engagement) * 1.2)
+)
+```
+
+The graph shows that likes were the most common form of engagement with World Cup posts, followed by reposts and replies. This suggests that users were more likely to react to posts or share them than engage in direct conversations. However, these totals represent interactions received by the sampled posts, rather than the behaviour of all Bluesky users.
+
+## 2. Did posts mentioning Spain receive different levels of engagement compared with posts mentioning Argentina?
+
+## Hypothesis Testing
+
+### Preparing the Hypothesis Test
+
+We need to compare the number of likes received by Spain and Argentina, in order to investigate the different levels of engagement between them. We selected these teams as they appeared the most in the text analysis, also because they were the two teams that made the World Cup final, hence the likelihood of high engagement between them. we excluded posts that mentioned both of the teams to keep the comparison separate.
+
+```{r}
+# Identify posts mentioning Spain or Argentina
+spain <- grepl(
+  "\\b(spain|españa)\\b",
+  clean_posts$text,
+  ignore.case = TRUE
+)
+
+argentina <- grepl(
+  "\\bargentina\\b",
+  clean_posts$text,
+  ignore.case = TRUE
+)
+
+# Create two separate groups
+spain_likes <- clean_posts$like_count[spain & !argentina]
+argentina_likes <- clean_posts$like_count[argentina & !spain]
+
+# Remove missing values
+spain_likes <- na.omit(spain_likes)
+argentina_likes <- na.omit(argentina_likes)
+
+# Check sample sizes
+length(spain_likes)
+length(argentina_likes)
+
+# Compare average likes
+mean(spain_likes)
+mean(argentina_likes)
+```
+
+### Hypothesis Testing
+
+We used the Wilcoxon rank-sum test to investigate whether posts mentioning Spain and Argentina differed in their likes distributions.
+
+The hypotheses were: H₀: The distributions of likes are the same for posts mentioning Spain and Argentina.
+
+H₁: The distributions of likes differ between posts mentioning Spain and Argentina.
+
+Social media engagement counts can be very skewed at times and contain extreme values. The test allows us to compare the two independent groups without assuming that likes follow a normal distribution. We used a significance level of 0.05.
+
+```{r, results='markup'}
+# Compare likes using the Wilcoxon rank-sum test
+test_result <- wilcox.test(
+  spain_likes,
+  argentina_likes,
+  alternative = "two.sided",
+  exact = FALSE
+)
+
+# Display the test results
+test_result
+
+# Compare the median likes
+median(spain_likes)
+median(argentina_likes)
+```
+
+The Wilcoxon rank-sum test produced a p-value of 0.007241, which is below the significance level of 0.05. Therefore, we rejected the null hypothesis and found evidence of a difference in the like-count distributions between posts mentioning Spain and Argentina. The median number of likes was higher for Spain-related posts, suggesting greater engagement in this sample. However, the results show an association rather than a actual relationship, and the findings may be influenced by the posts included in our dataset.
+
+## 3. Can World Cup discussions on Bluesky be grouped into distinct themes based on their text content?
+
+## Clustering World Cup Discussions
+
+### Preparing Data for Clustering
+For us to investigate whether World Cup discussions couls be grouped into distinct themes, we represented the cleaned posts using TF-IDF. we did this in order to five more importance to distinctive words within individual posts. We also removed very rare terms in order to improve efficiency of the clustering process.
+
+```{r}
+# Create a TF-IDF weighted document-term matrix
+tfidf_dtm <- DocumentTermMatrix(
+  worldcup_corpus,
+  control = list(weighting = weightTfIdf)
+)
+
+# Remove terms appearing in very few posts
+tfidf_dtm <- removeSparseTerms(tfidf_dtm, 0.99)
+
+# Check the dimensions
+dim(tfidf_dtm)
+
+# Convert to a matrix for clustering
+tfidf_matrix <- as.matrix(tfidf_dtm)
+
+# Check the matrix size
+dim(tfidf_matrix)
+```
+### Removing empty documents
+Some posts contained no usable terms after text preprocessing and feature selection. Since these posts cannot contribute meaningful information to text clustering, we excluded them from the clustering dataset. The original posts were retained separately for the other analyses.
+```{r}
+# Identify posts with at least one non-zero TF-IDF value
+valid_posts <- rowSums(tfidf_matrix != 0) > 0
+
+# Count empty documents
+sum(!valid_posts)
+
+# Remove empty documents from the clustering matrix
+cluster_matrix <- tfidf_matrix[valid_posts, , drop = FALSE]
+
+# Check the final dimensions
+dim(cluster_matrix)
+```
+
+### Choosing the number of clusters
+We used K-means clustering to group Bluesky posts based on similarities in their TF-IDF representations.
+We also used Euclidean distance to measure differences between posts. We used the elbow method, where we compared the total within-cluster sum of squares for different values of k to help determine an appropriate number of clusters.
+
+```{r}
+# Make results reproducible
+set.seed(123)
+
+# Try different numbers of clusters
+k_values <- 2:8
+
+# Store within-cluster variation
+wcss <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  result <- kmeans(
+    cluster_matrix,
+    centers = k_values[i],
+    nstart = 5,
+    iter.max = 50
+  )
+
+  wcss[i] <- result$tot.withinss
+}
+
+# Display the results
+data.frame(
+  Clusters = k_values,
+  WCSS = round(wcss, 2)
+)
+
+# Plot the elbow graph
+plot(
+  k_values,
+  wcss,
+  type = "b",
+  pch = 19,
+  col = "steelblue",
+  main = "Elbow Method for World Cup Discussions",
+  xlab = "Number of Clusters (k)",
+  ylab = "Within-Cluster Sum of Squares"
+)
+```
+
+### Interpretation
+The elbow graph shows that within-cluster variation generally decreased as the number of clusters increased. Even though there was no completely clear elbow, the reduction between three and four clusters was clear. We selected 4 clusters as an initial choice, which provides a manageable number of groups for examining different discussion themes
+
+### Performing k-means clustering
+We applied K-means clustering with 4 clusters to the TF-IDF matrix. Group posts according to similarities in their word usage, using Euclidean distance. We used multiple random starting points to reduce the chance of obtaining a poor clustering solution. After fitting the model, we examined the number of posts assigned to each cluster to understand how the discussions were distributed.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Perform K-means clustering
+worldcup_kmeans <- kmeans(
+  cluster_matrix,
+  centers = 4,
+  nstart = 25,
+  iter.max = 100
+)
+
+# Display number of posts in each cluster
+table(worldcup_kmeans$cluster)
+
+# Display proportion of posts in each cluster
+round(prop.table(table(worldcup_kmeans$cluster)) * 100, 2)
+```
+### Examining Cluster Characteristics
+The initial clustering results showed that the posts were unevenly distributed across the four clusters, with most posts belonging to one group. To understand whether these clusters represented meaningful discussion themes, we examined the words with the highest average TF-IDF weights within each cluster. This helped us investigate what distinguished the groups before interpreting or visualising the results.
+
+```{r}
+# Identify the top words in each cluster
+for (i in 1:4) {
+
+  # Select posts belonging to the current cluster
+  cluster_posts <- cluster_matrix[
+    worldcup_kmeans$cluster == i,
+    ,
+    drop = FALSE
+  ]
+
+  # Calculate average TF-IDF weight for each word
+  average_tfidf <- colMeans(cluster_posts)
+
+  # Sort words by importance
+  top_terms <- sort(
+    average_tfidf,
+    decreasing = TRUE
+  )
+
+  # Display cluster information
+  cat("\nCluster", i, "\n")
+  cat("Number of posts:", nrow(cluster_posts), "\n")
+
+  print(round(head(top_terms, 10), 3))
+}
+```
+
+### Improving the clustering features 
+The initial K-means results showed that most posts were grouped into one large cluster, while two clusters contained very few posts. The most important terms also suggested that generic World Cup keywords and multilingual hashtags were influencing the results. To improve the analysis, we removed these less informative features and normalised the TF-IDF vectors before repeating the clustering process. This improvement aimed to identify more meaningful differences between discussion topics.
+
+```{r}
+# Remove generic tournament terms and hashtag variants
+remove_terms <- c(
+  "fifa", "world", "cup", "worldcup",
+  "fifaworldcup", "fifa2026", "worldcup2026",
+  "copamundialfifa", "fifaワールドカップ"
+)
+
+# Keep more informative terms
+use_terms <- !colnames(cluster_matrix) %in% remove_terms
+
+refined_matrix <- cluster_matrix[, use_terms, drop = FALSE]
+
+# Normalise each post's TF-IDF vector
+row_lengths <- sqrt(rowSums(refined_matrix^2))
+
+# Remove posts with no remaining features
+valid_refined <- row_lengths > 0
+
+refined_matrix <- refined_matrix[valid_refined, , drop = FALSE]
+
+row_lengths <- row_lengths[valid_refined]
+
+refined_matrix <- refined_matrix / row_lengths
+
+# Check the refined matrix dimensions
+dim(refined_matrix)
+
+# Check that each row has length 1
+head(sqrt(rowSums(refined_matrix^2)))
+```
+
+### Running the Refined K-means Model
+After removing generic World Cup terms and normalising the TF-IDF vectors, we repeated K-means clustering using four clusters. This allowed us to compare the new cluster distribution with the original results and examine whether the refined text representation produced more meaningful groups. We also examined the most important terms in each cluster to help identify the main discussion themes.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Run K-means on the refined TF-IDF matrix
+refined_kmeans <- kmeans(
+  refined_matrix,
+  centers = 4,
+  nstart = 25,
+  iter.max = 100
+)
+
+# Number of posts in each cluster
+table(refined_kmeans$cluster)
+
+# Percentage of posts in each cluster
+round(
+  prop.table(table(refined_kmeans$cluster)) * 100,
+  2
+)
+
+# Display the most important terms in each cluster
+for (i in 1:4) {
+
+  posts <- refined_matrix[
+    refined_kmeans$cluster == i,
+    ,
+    drop = FALSE
+  ]
+
+  important_words <- sort(
+    colMeans(posts),
+    decreasing = TRUE
+  )
+
+  cat("\nCluster", i, "\n")
+  cat("Number of posts:", nrow(posts), "\n")
+
+  print(round(head(important_words, 8), 3))
+}
+```
+The refined clustering produced more interpretable groups than the original model. Cluster 1 mainly contained discussions about Donald Trump, FIFA leadership and the trophy ceremony, while Cluster 2 focused on Spain's victory and Argentina's defeat. Cluster 3 appeared to capture Spanish-language reactions, and Cluster 4 contained broader match and tournament discussions. Although the clusters remained uneven in size, the results suggest that removing generic keywords helped reveal more specific themes. The language-related cluster also shows that differences in language can influence text clustering.
+
+### Visualising Clusters
+To visualise the clustering results, we used Principal Component Analysis (PCA) to reduce the TF-IDF data to two dimensions. Each point represents a Bluesky post, and the colours indicate its assigned cluster. This visualisation helps us examine the separation and overlap between discussion groups. However, because PCA reduces the original 143 features to only two dimensions, the plot cannot show every difference captured 
+
+```{r}
+# Apply PCA to the refined TF-IDF matrix
+pca_result <- prcomp(
+  refined_matrix,
+  center = TRUE,
+  scale. = FALSE
+)
+
+# Extract the first two principal components
+pca_data <- pca_result$x[, 1:2]
+
+# Assign colours to the four clusters
+cluster_colours <- c(
+  "steelblue",
+  "orange",
+  "forestgreen",
+  "purple"
+)
+
+# Plot the clusters
+plot(
+  pca_data[, 1],
+  pca_data[, 2],
+  col = cluster_colours[refined_kmeans$cluster],
+  pch = 16,
+  cex = 0.5,
+  main = "Clustering of 2026 World Cup Discussions",
+  xlab = "Principal Component 1",
+  ylab = "Principal Component 2"
+)
+
+# Add a legend
+legend(
+  "topright",
+  legend = c(
+    "Cluster 1: FIFA and Politics",
+    "Cluster 2: Spain vs Argentina",
+    "Cluster 3: Spanish-language Posts",
+    "Cluster 4: General Discussions"
+  ),
+  col = cluster_colours,
+  pch = 16,
+  cex = 0.7
+)
+```
+### Interpretation of Clustering Results
+The PCA visualisation shows that the improved clustering identified several different patterns in World Cup discussions. Posts about FIFA leadership and politics were mostly separated from posts celebrating Spain's victory over Argentina. Spanish-language posts formed a smaller group, while general tournament discussions occupied a more central area.
+Some overlap remained between the clusters, suggesting that different conversations shared similar words and topics. Overall, the analysis indicates that discussions about the 2026 World Cup extended beyond match results and included political reactions, celebrations and broader football conversations. However, the clusters were not completely distinct, and language differences also influenced the results.
+
+
+## How are Bluesky users connected through interactions about the 2026 FIFA World Cup, and which users occupy the most central positions in these discussions?
+
+## Network Analysis
+In this section, we look at how Bluesky users interacted with each other while discussing the 2026 FIFA World Cup. We want to understand how these users are connected and identify which users played the most important roles in the discussions.
+
+We will create a directed network using interactions such as replies and mentions. Each node represents a Bluesky user, and each directed edge shows an interaction from one user to another. We will then use network measures and centrality measures to study the connections and identify the most influential or well-connected users.
+
+### Inspecting Network Data.
+
+```{r}
+# Check the available columns
+names(worldcup_posts)
+
+# Count posts containing reply information
+sum(!is.na(worldcup_posts$in_reply_to))
+
+# Count posts containing mentions
+sum(lengths(worldcup_posts$mentions) > 0)
+
+# Count unique authors
+length(unique(worldcup_posts$author_handle))
+```
+
+### Checking Reply Connections
+We first checked whether the replies in our dataset could be linked to other collected posts. We used the post URIs to identify these connections. This is important because we need to know which users interacted with each other before creating the network.
+
+```{r}
+ # Select posts that are replies
+reply_posts <- worldcup_posts[
+  !is.na(worldcup_posts$in_reply_to) &
+  worldcup_posts$in_reply_to != "",
+]
+
+# Count the replies
+nrow(reply_posts)
+
+# Match each reply to its parent post in our dataset
+parent_index <- match(
+  reply_posts$in_reply_to,
+  worldcup_posts$uri
+)
+
+# Count replies whose parent post was collected
+sum(!is.na(parent_index))
+
+# Count replies whose parent post was not collected
+sum(is.na(parent_index))
+```
+
+### Identifying Users in Reply Connections
+Most replies in our dataset referred to posts that were not included in our original collection. To recover these connections, we used the account identifiers stored in the Bluesky post URIs. This allowed us to identify the users sending and receiving replies, even when the original parent posts were missing from our dataset.
+
+```{r}
+# Extract the account identifier from a Bluesky post URI
+get_user_id <- function(uri) {
+  sub("^at://([^/]+)/.*$", "\\1", uri)
+}
+
+# Identify the user who wrote each reply
+reply_from <- get_user_id(reply_posts$uri)
+
+# Identify the user who received each reply
+reply_to <- get_user_id(reply_posts$in_reply_to)
+
+# Create a table of reply connections
+reply_edges <- data.frame(
+  from = reply_from,
+  to = reply_to
+)
+
+# Remove missing or invalid connections
+reply_edges <- reply_edges[
+  !is.na(reply_edges$from) &
+  !is.na(reply_edges$to) &
+  reply_edges$from != reply_edges$to &
+  grepl("^did:", reply_edges$from) &
+  grepl("^did:", reply_edges$to),
+]
+
+# Check the number of connections
+nrow(reply_edges)
+
+# Count unique users in the reply network
+length(unique(c(reply_edges$from, reply_edges$to)))
+
+# Preview the connections
+head(reply_edges)
+
+```
+### Building the Reply Network
+We created a directed network using the reply connections found in our Bluesky data. Each node represents a user, and each edge represents a reply from one user to another. We used the igraph package in R to build the network. This allows us to examine how users are connected and identify the structure of the discussions.
+
+```{r}
+# Load the network analysis package
+library(igraph)
+
+# Build a directed network from the reply connections
+reply_network <- graph_from_data_frame(
+  reply_edges,
+  directed = TRUE
+)
+
+# Check the number of users and connections
+vcount(reply_network)
+ecount(reply_network)
+
+# Check the number of connected components
+components(reply_network, mode = "weak")$no
+
+# Find the size of the largest connected component
+max(components(reply_network, mode = "weak")$csize)
+```
+### Checking Network Coverage
+Our first network had 55 users and 29 reply connections. However, the network was divided into 26 separate groups, and the largest group contained only four users.
+
+This means the network was not well connected. We therefore checked the reply and repost activity in our original dataset to see whether collecting more interactions could help us build a larger network.
+
+```{r}
+# Total number of replies received
+sum(worldcup_posts$reply_count, na.rm = TRUE)
+
+# Total number of reposts received
+sum(worldcup_posts$repost_count, na.rm = TRUE)
+
+# Number of posts that received replies
+sum(worldcup_posts$reply_count > 0, na.rm = TRUE)
+
+# Number of posts that received reposts
+sum(worldcup_posts$repost_count > 0, na.rm = TRUE)
+```
+### Network Structure
+We examined the structure of the Bluesky interaction network using several network measures. These include the number of users, connections, network density, and connected components.
+
+These measures help us understand how users interacted during World Cup discussions and whether the conversations formed one large network or several smaller groups.
+
+```{r}
+# Number of users in the network
+vcount(reply_network)
+
+# Number of connections
+ecount(reply_network)
+
+# Network density
+edge_density(reply_network)
+
+# Number of weakly connected components
+components(reply_network, mode = "weak")$no
+
+# Size of the largest connected component
+max(components(reply_network, mode = "weak")$csize)
+
+# Average degree
+mean(degree(reply_network, mode = "all"))
+```
+### Centrality Analysis
+We used degree centrality and betweenness centrality to identify important users in the reply network.
+
+Degree centrality measures how many direct connections a user has, while betweenness centrality measures how often a user lies on the shortest paths between other users.
+
+These measures help us understand which users were more connected and which users may have acted as bridges between different conversations.
+
+```{r}
+# Calculate degree centrality
+degree_scores <- degree(reply_network, mode = "all")
+
+# Calculate betweenness centrality
+betweenness_scores <- betweenness(
+  reply_network,
+  directed = TRUE
+)
+
+# Combine results into a table
+centrality_results <- data.frame(
+  User = V(reply_network)$name,
+  Degree = degree_scores,
+  Betweenness = betweenness_scores
+)
+
+# Show the 10 users with the highest degree
+head(
+  centrality_results[
+    order(-centrality_results$Degree),
+  ],
+  10
+)
+
+# Show the 10 users with the highest betweenness
+head(
+  centrality_results[
+    order(-centrality_results$Betweenness),
+  ],
+  10
+)
+```
+### Displaying Centrality Scores
+
+```{r}
+# Top 10 users by degree centrality
+top_degree <- centrality_results[
+  order(-centrality_results$Degree),
+  c("User", "Degree", "Betweenness")
+]
+
+print(head(top_degree, 10), row.names = FALSE)
+
+# Top 10 users by betweenness centrality
+top_betweenness <- centrality_results[
+  order(-centrality_results$Betweenness),
+  c("User", "Degree", "Betweenness")
+]
+
+print(head(top_betweenness, 10), row.names = FALSE)
+
+# Summary of centrality scores
+summary(centrality_results[, c("Degree", "Betweenness")])
+```
+### Interpretation of Centrality Results
+he degree centrality results show that most users had only one connection in the reply network. The highest degree was 3, while the average degree was approximately 1.05. This suggests that no single user dominated the conversations captured in our dataset.
+
+All users had a betweenness centrality of 0. This means that no users acted as bridges along directed shortest paths between other users in the network.
+
+Overall, the centrality results suggest that the observed World Cup reply discussions were mainly small, separate interactions rather than a strongly connected conversation network. However, the limited number of available reply relationships means these results may not represent the full Bluesky discussion.
+
+
+### Network Visualisation
+We created a network graph to show how Bluesky users were connected through replies about the 2026 FIFA World Cup.
+
+Each point represents a user, and each arrow represents a reply from one user to another. We used different node sizes to show how many connections each user had.
+
+This visualisation helps us see whether users formed large connected groups or smaller, separate conversations.
+
+```{r}
+# Calculate degree for node sizes
+node_degree <- degree(reply_network, mode = "all")
+
+# Set node sizes based on degree
+V(reply_network)$size <- 5 + node_degree * 3
+
+# Set node colours
+V(reply_network)$color <- "steelblue"
+
+# Set edge appearance
+E(reply_network)$color <- "grey60"
+E(reply_network)$arrow.size <- 0.3
+
+# Plot the full network
+set.seed(123)
+
+plot(
+  reply_network,
+  layout = layout_with_fr(reply_network),
+  vertex.label = NA,
+  main = "Bluesky Reply Network: 2026 FIFA World Cup"
+)
+```
+### Interpretation of the Reply Network
+The network graph shows that most users were connected in small groups, often involving just two users. Only a few users had connections with more than one other person.
+
+There was no large connected community in the collected data. This supports our earlier network statistics, which showed 26 separate connected components and a low network density.
+
+These results suggest that the observed World Cup conversations were mostly separate reply exchanges rather than one large discussion. However, the graph only represents the reply relationships we were able to collect, so it does not show every interaction that happened on Bluesky.
+
+### Largest Connected Component
+We selected the largest connected component to examine a smaller part of the reply network in more detail.
+This component contains four users who were connected through reply interactions. Looking at this group separately helps us understand how conversations were structured within the network.
+
+```{r}
+# Find the connected components
+network_groups <- components(reply_network, mode = "weak")
+
+# Identify the largest component
+largest_group <- which.max(network_groups$csize)
+
+# Extract the users belonging to this component
+largest_nodes <- which(
+  network_groups$membership == largest_group
+)
+
+# Create the subgraph
+largest_network <- induced_subgraph(
+  reply_network,
+  vids = largest_nodes
+)
+
+# Check the number of users and connections
+vcount(largest_network)
+ecount(largest_network)
+
+# Plot the largest connected component
+set.seed(123)
+
+plot(
+  largest_network,
+  layout = layout_with_fr(largest_network),
+  vertex.size = 18,
+  vertex.color = "steelblue",
+  vertex.label = NA,
+  edge.color = "grey50",
+  edge.arrow.size = 0.5,
+  main = "Largest Connected Group in the World Cup Reply Network"
+)
+```
+
+### Interpretation of the Largest Connected Component
+The largest connected component contains 4 users and 3 reply connections. The graph shows that one user replied to three other users, creating a small star-shaped network.
+This user had the highest degree centrality in our dataset, with 3 direct connections. However, the other users were not connected to each other.
+This supports our earlier findings that the World Cup discussions in our collected data were mostly made up of small, separate interactions rather than large connected conversations.
+
+
+### Limitations of the Network Analysis
+Our network analysis was limited by the reply relationships available in the collected Bluesky posts. Although our dataset contained many World Cup posts, only a small number provided usable information about interactions between users.
+
+The network therefore contains 55 users and 29 connections, which is too small to represent the entire World Cup discussion on Bluesky.
+
+Also, we focused on reply relationships rather than all possible interactions, such as reposts, likes and follows. As a result, our findings describe the structure of the collected reply network rather than the complete Bluesky community.
+
+## Overall Findings and Conclusions
+In this, we project investigated how Bluesky users discussed and interacted with content about the 2026 FIFA World Cup.
+
+Our text analysis showed that Spain and Argentina were among the most frequently mentioned teams. Discussions also included the World Cup final, celebrations and political topics.
+
+The engagement analysis showed that likes were the most common form of interaction, followed by reposts and replies. Our hypothesis test also found a statistically significant difference in the distribution of likes between posts mentioning Spain and Argentina (p = 0.0072). However, this does not necessarily mean that one team's supporters were more active overall.
+
+The clustering analysis identified four main discussion themes: FIFA and politics, Spain versus Argentina, Spanish-language posts, and general World Cup conversations. This showed that users were discussing different aspects of the tournament rather than focusing only on match results.
+
+Finally, the network analysis showed that reply interactions were mostly separated into small groups. The network contained 55 users and 29 connections, with no large connected community.
+
+Overall, our findings suggest that the 2026 FIFA World Cup generated different types of conversations on Bluesky, including football results, celebrations and political discussions. However, the findings are limited to the posts collected for this project and should not be treated as representative of all World Cup fans.
+
+```{r}
+saveRDS(worldcup_posts, "worldcup_posts.rds")
+file.exists("worldcup_posts.rds")
+```
+
